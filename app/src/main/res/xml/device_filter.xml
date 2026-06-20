@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- This will match any USB camera device -->
-    <usb-device class="239" subclass="2" protocol="1" />
+    <usb-device vendor-id="21325" product-id="33" />
 </resources>
