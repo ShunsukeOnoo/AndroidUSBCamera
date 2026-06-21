@@ -5,12 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.ImageFormat
-import android.graphics.Rect
 import android.graphics.SurfaceTexture
-import android.graphics.YuvImage
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
@@ -25,11 +20,8 @@ import com.jiangdg.ausbc.MultiCameraClient
 import com.jiangdg.ausbc.base.CameraFragment
 import com.jiangdg.ausbc.camera.bean.CameraRequest
 import com.jiangdg.ausbc.callback.ICameraStateCallBack
-import com.jiangdg.ausbc.callback.IPreviewDataCallBack
 import com.jiangdg.ausbc.widget.AspectRatioTextureView
 import com.jiangdg.ausbc.widget.IAspectRatio
-import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
 
 class DemoFragment : CameraFragment() {
 
@@ -37,7 +29,6 @@ class DemoFragment : CameraFragment() {
     private var mRootView: FrameLayout? = null
     private lateinit var prefs: SharedPreferences
 
-    var onFrame: ((Bitmap) -> Unit)? = null
     private var pendingDevice: UsbDevice? = null
 
     var flipHorizontal = false
@@ -83,7 +74,7 @@ class DemoFragment : CameraFragment() {
             .setPreviewFormat(CameraRequest.PreviewFormat.FORMAT_MJPEG)
             .setAspectRatioShow(true)
             .setCaptureRawImage(false)
-            .setRawPreviewData(true)
+            .setRawPreviewData(false)
             .create()
 
     override fun onViewCreated(view: View, savedInstanceState: android.os.Bundle?) {
@@ -91,6 +82,7 @@ class DemoFragment : CameraFragment() {
         prefs = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         flipHorizontal = prefs.getBoolean(prefKeyH(), false)
         flipVertical = prefs.getBoolean(prefKeyV(), false)
+        applyTransform()
 
         registerUsbDiagReceiver()
         logAllUsbDevices("onViewCreated")
@@ -99,7 +91,6 @@ class DemoFragment : CameraFragment() {
         mTextureView?.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, w: Int, h: Int) {
                 libListener?.onSurfaceTextureAvailable(surface, w, h)
-                openExistingCameraIfNeeded()
             }
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, w: Int, h: Int) {
                 libListener?.onSurfaceTextureSizeChanged(surface, w, h)
@@ -110,6 +101,13 @@ class DemoFragment : CameraFragment() {
                 libListener?.onSurfaceTextureUpdated(surface)
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Library's CameraFragment.onResume() already handles device detection when
+        // permission is granted. We only add a fallback for the first-launch case
+        // (USB permission not yet granted) triggered via triggerCameraOpen().
     }
 
     override fun onDestroyView() {
@@ -174,6 +172,10 @@ class DemoFragment : CameraFragment() {
             val iface = d.getInterface(i)
             Log.d(TAG, "[$ctx]   iface[$i]: class=${iface.interfaceClass} subclass=${iface.interfaceSubclass} protocol=${iface.interfaceProtocol}")
         }
+    }
+
+    fun triggerCameraOpen() {
+        view?.postDelayed({ if (!isCameraOpened()) openExistingCameraIfNeeded() }, 2000)
     }
 
     fun setPendingDevice(device: UsbDevice) {
@@ -248,35 +250,7 @@ class DemoFragment : CameraFragment() {
     }
 
     private fun startPreview() {
-        addPreviewDataCallBack(object : IPreviewDataCallBack {
-            override fun onPreviewData(
-                data: ByteArray?,
-                width: Int,
-                height: Int,
-                format: IPreviewDataCallBack.DataFormat
-            ) {
-                if (data == null) return
-                val bitmap = try {
-                    when (format) {
-                        IPreviewDataCallBack.DataFormat.NV21 -> {
-                            val yuv = YuvImage(data, ImageFormat.NV21, width, height, null)
-                            val out = ByteArrayOutputStream()
-                            yuv.compressToJpeg(Rect(0, 0, width, height), 90, out)
-                            BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
-                        }
-                        IPreviewDataCallBack.DataFormat.RGBA -> {
-                            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
-                                copyPixelsFromBuffer(ByteBuffer.wrap(data))
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Frame conversion error", e)
-                    null
-                } ?: return
-                onFrame?.invoke(bitmap)
-            }
-        })
+        // The library renders directly to mTextureView; no extra callback needed.
     }
 
     override fun getGravity(): Int = Gravity.TOP

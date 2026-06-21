@@ -46,13 +46,6 @@ class MainActivity : AppCompatActivity() {
             supportFragmentManager.findFragmentByTag(FRAGMENT_TAG) as DemoFragment
         }
 
-        // Wire the preview callback to the ImageView every time the activity is created.
-        cameraFragment.onFrame = { bitmap ->
-            if (!isFinishing) runOnUiThread { binding.cameraDisplay.setImageBitmap(bitmap) }
-        }
-
-        applyFlipToDisplay()
-
         // If the activity was launched (or resumed) by a USB_DEVICE_ATTACHED event,
         // the UsbDevice is in the intent.  Pass it to the fragment so that it can
         // request USB permission once the surface (and USB monitor) is ready.
@@ -66,11 +59,6 @@ class MainActivity : AppCompatActivity() {
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_PERMISSION)
         }
-    }
-
-    private fun applyFlipToDisplay() {
-        binding.cameraDisplay.scaleX = if (cameraFragment.flipHorizontal) -1f else 1f
-        binding.cameraDisplay.scaleY = if (cameraFragment.flipVertical) -1f else 1f
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -88,17 +76,29 @@ class MainActivity : AppCompatActivity() {
         return when (item.itemId) {
             R.id.action_flip_horizontal -> {
                 cameraFragment.setFlip(!cameraFragment.flipHorizontal, cameraFragment.flipVertical)
-                applyFlipToDisplay()
                 invalidateOptionsMenu()
                 true
             }
             R.id.action_flip_vertical -> {
                 cameraFragment.setFlip(cameraFragment.flipHorizontal, !cameraFragment.flipVertical)
-                applyFlipToDisplay()
                 invalidateOptionsMenu()
                 true
             }
             else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CAMERA_PERMISSION &&
+            grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        ) {
+            cameraFragment.triggerCameraOpen()
         }
     }
 
