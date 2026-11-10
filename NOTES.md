@@ -32,6 +32,30 @@ override fun onRequestPermissionsResult(requestCode, permissions, grantResults) 
 }
 ```
 
+### Library bug: USB permission result is lost on Android 12+
+
+`USBMonitor.register()` creates its permission `PendingIntent` with `FLAG_IMMUTABLE` on API 31+. The system cannot fill in `EXTRA_DEVICE` / `EXTRA_PERMISSION_GRANTED`, so the library's receiver sees `device=null, granted=false` and treats "Allow" as a denial. Its 1 s device poll only reacts to newly attached devices, so it never retries.
+
+Symptom: after a reboot (USB permission is per attach), launching the app and tapping "Allow" leaves the screen black. Re-plugging works because the system USB chooser grants permission itself.
+
+Workaround in `DemoFragment`: `onPause()` records whether a video-class device lacked permission (the permission dialog is an activity, so it pauses us). `onResume()` then waits 1.5 s and, if the camera is still not open but `UsbManager.hasPermission()` is now true, calls `requestPermission(device)` again. The library takes its "has permission" branch and connects. The delay leaves room for the library's own path on Android ≤ 11, where the extras do arrive, to finish first; this avoids the ERROR -99 race described above. Log line to look for: `USB permission granted but camera not opened — reconnecting`.
+
+### "Always" option greyed out → RECORD_AUDIO
+
+The MS2109 capture device has a USB audio interface as well as a video one. AOSP disables "Always" in the USB chooser (`ResolverActivity.setAlwaysButtonEnabled`) and hides the "Always open" checkbox in `UsbConfirmActivity` / `UsbPermissionActivity` when the app lacks `RECORD_AUDIO` and the device can capture audio. The app therefore declares `RECORD_AUDIO` and requests it together with `CAMERA`. It never records audio.
+
+Once "Always" is ticked, the system stores the app as the default handler. On attach it grants USB permission and launches the app directly, with no dialogs (`UsbProfileGroupSettingsManager.resolveActivity`).
+
+- The chooser ("Choose an app for the USB device") appears only when **2+ apps** match the device. With a single match, Android shows a simpler confirm dialog. Check for other installed UVC apps.
+- If the system microphone privacy toggle is on, Android refuses USB access to audio-capable devices entirely.
+- `android:directBootAware` was removed from `MainActivity`. Launched before unlock, it would crash on credential-encrypted `SharedPreferences`.
+
+### "Always open" forgotten after every reboot → direct-boot-aware attach activity
+
+USB permission grants live in memory only and are lost on reboot. The saved "Always open" default (in `/data/system/users/0/usb_device_manager.xml`) is what re-grants permission at attach time. But a camera plugged in at boot is enumerated at `PHASE_ACTIVITY_MANAGER_READY` (`UsbService.systemReady` → `UsbHostManager.monitorUsbHostBus`), **before user 0 is unlocked**. `UsbUserSettingsManager.queryIntentActivities` passes no `MATCH_DIRECT_BOOT_*` flags, so while the user is locked, only direct-boot-aware activities match. A non-aware activity gives zero matches, so `resolveActivity` returns without granting, and the app's own `requestPermission` then shows the dialog again.
+
+Fix: `UsbAttachActivity` (direct-boot-aware, `Theme.NoDisplay`) owns the `USB_DEVICE_ATTACHED` filter. At boot it is matched as the saved default, so the system grants permission. If the user is already unlocked, it forwards the intent to `MainActivity` (`NEW_TASK | CLEAR_TOP | SINGLE_TOP`, so a running instance gets `onNewIntent`); otherwise it just finishes. The default is stored per package, so moving the filter to a new activity keeps an existing "Always" choice. Check it with `adb shell dumpsys usb` (device preferences section).
+
 ### Rendering
 
 The library renders camera frames directly to the `AspectRatioTextureView` via OpenGL ES (`RenderMode.OPENGL`). No frame callbacks or secondary `ImageView` are needed. Setting `setRawPreviewData(false)` and removing any `onFrame` callback avoids unnecessary byte-array allocations.

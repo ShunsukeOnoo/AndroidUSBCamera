@@ -56,8 +56,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestCameraPermissionIfNeeded() {
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA_PERMISSION)
+        // RECORD_AUDIO is never used for recording; holding it is what lets Android offer
+        // "Always" for this audio-capable USB device, so later attaches need no dialog.
+        val missing = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isNotEmpty()) {
+            requestPermissions(missing.toTypedArray(), REQUEST_CAMERA_PERMISSION)
         }
     }
 
@@ -94,9 +98,10 @@ class MainActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        val cameraIndex = permissions.indexOf(Manifest.permission.CAMERA)
         if (requestCode == REQUEST_CAMERA_PERMISSION &&
-            grantResults.isNotEmpty() &&
-            grantResults[0] == PackageManager.PERMISSION_GRANTED
+            cameraIndex >= 0 &&
+            grantResults.getOrNull(cameraIndex) == PackageManager.PERMISSION_GRANTED
         ) {
             cameraFragment.triggerCameraOpen()
         }

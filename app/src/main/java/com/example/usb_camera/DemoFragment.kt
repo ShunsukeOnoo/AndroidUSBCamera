@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.graphics.SurfaceTexture
+import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
@@ -30,6 +31,7 @@ class DemoFragment : CameraFragment() {
     private lateinit var prefs: SharedPreferences
 
     private var pendingDevice: UsbDevice? = null
+    private var awaitingUsbPermission = false
 
     var flipHorizontal = false
         private set
@@ -103,12 +105,42 @@ class DemoFragment : CameraFragment() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        // The USB permission dialog is an activity, so it pauses us. Remember whether a camera
+        // was still waiting for permission so onResume() can check what the user answered.
+        awaitingUsbPermission = videoDevices().any { !usbManager().hasPermission(it) }
+    }
+
     override fun onResume() {
         super.onResume()
         // Library's CameraFragment.onResume() already handles device detection when
-        // permission is granted. We only add a fallback for the first-launch case
-        // (USB permission not yet granted) triggered via triggerCameraOpen().
+        // permission is granted. On Android 12+ the library's permission PendingIntent is
+        // FLAG_IMMUTABLE, so the result broadcast arrives without the device / granted extras
+        // and the library treats "Allow" as a denial. Recover by asking again once the
+        // permission is actually granted; the library then connects without a dialog.
+        if (awaitingUsbPermission) {
+            awaitingUsbPermission = false
+            view?.postDelayed({ reconnectIfPermissionGranted() }, 1500)
+        }
     }
+
+    private fun reconnectIfPermissionGranted() {
+        if (isCameraOpened()) return
+        val device = videoDevices().firstOrNull { usbManager().hasPermission(it) } ?: return
+        Log.d(TAG, "USB permission granted but camera not opened — reconnecting")
+        requestPermission(device)
+    }
+
+    private fun usbManager() =
+        requireContext().getSystemService(Context.USB_SERVICE) as UsbManager
+
+    private fun videoDevices(): List<UsbDevice> =
+        usbManager().deviceList.values.filter { device ->
+            (0 until device.interfaceCount).any {
+                device.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_VIDEO
+            }
+        }
 
     override fun onDestroyView() {
         super.onDestroyView()
